@@ -1,7 +1,5 @@
 import { Router, type NextFunction, type Request, type Response } from "express";
 import { stringify } from "csv-stringify";
-import type { Prisma } from "@prisma/client";
-import type { Lead } from "@prisma/client";
 import { z } from "zod";
 import { prisma } from "../lib/prisma.js";
 
@@ -11,7 +9,6 @@ export const LEAD_STATUSES = [
   "CONTACTED",
   "NOT_RELEVANT",
 ] as const;
-
 export type LeadStatus = (typeof LEAD_STATUSES)[number];
 
 const leadFiltersFields = z.object({
@@ -53,7 +50,7 @@ const CSV_COLUMNS = [
   "googleMapsUri",
 ] as const;
 
-function csvRow(lead: Lead): Record<(typeof CSV_COLUMNS)[number], string | number | null> {
+function csvRow(lead: any): Record<(typeof CSV_COLUMNS)[number], string | number | null> {
   return {
     businessName: lead.businessName,
     internationalPhoneNumber: lead.internationalPhoneNumber,
@@ -70,9 +67,8 @@ function csvRow(lead: Lead): Record<(typeof CSV_COLUMNS)[number], string | numbe
 
 export type ParsedLeadFilters = z.infer<typeof leadFiltersFields>;
 
-export function buildLeadWhere(filters: ParsedLeadFilters): Prisma.LeadWhereInput {
-  const and: Prisma.LeadWhereInput[] = [];
-
+export function buildLeadWhere(filters: ParsedLeadFilters): any {
+  const and: any[] = [];
   if (filters.status?.trim()) {
     and.push({ status: filters.status.trim() });
   }
@@ -94,20 +90,11 @@ export function buildLeadWhere(filters: ParsedLeadFilters): Prisma.LeadWhereInpu
       },
     });
   }
-
   if (filters.hasPhone === true) {
     and.push({
       OR: [
-        {
-          nationalPhoneNumber: {
-            not: null,
-          },
-        },
-        {
-          internationalPhoneNumber: {
-            not: null,
-          },
-        },
+        { nationalPhoneNumber: { not: null } },
+        { internationalPhoneNumber: { not: null } },
       ],
     });
   } else if (filters.hasPhone === false) {
@@ -116,7 +103,6 @@ export function buildLeadWhere(filters: ParsedLeadFilters): Prisma.LeadWhereInpu
       internationalPhoneNumber: null,
     });
   }
-
   if (filters.hasWebsite === true) {
     and.push({
       AND: [
@@ -129,7 +115,6 @@ export function buildLeadWhere(filters: ParsedLeadFilters): Prisma.LeadWhereInpu
       OR: [{ websiteUri: null }, { websiteUri: { equals: "" } }],
     });
   }
-
   return and.length > 0 ? { AND: and } : {};
 }
 
@@ -161,15 +146,12 @@ export function createLeadsRouter(): Router {
       const q = req.query;
       const hasPhoneRaw = parseQueryBoolean(q.hasPhone);
       const hasWebsiteRaw = parseQueryBoolean(q.hasWebsite);
-
       const { hasPhone: _hq, hasWebsite: _hw, ...rest } = q;
-
       const parsed = listQuerySchema.safeParse({
         ...rest,
         hasPhone: hasPhoneRaw,
         hasWebsite: hasWebsiteRaw,
       });
-
       if (!parsed.success) {
         res.status(400).json({
           error: "Invalid query",
@@ -177,11 +159,9 @@ export function createLeadsRouter(): Router {
         });
         return;
       }
-
       const { page, limit, ...filterFields } = parsed.data;
       const where = buildLeadWhere(filterFields);
       const skip = (page - 1) * limit;
-
       const [leads, total] = await Promise.all([
         prisma.lead.findMany({
           where,
@@ -191,7 +171,6 @@ export function createLeadsRouter(): Router {
         }),
         prisma.lead.count({ where }),
       ]);
-
       res.json({ leads, total, page, limit });
     } catch (e) {
       next(e);
@@ -210,27 +189,21 @@ export function createLeadsRouter(): Router {
           });
           return;
         }
-
         const where = buildLeadWhere(parsed.data);
         const ts = new Date().toISOString().replace(/[:.]/g, "-");
-
         res.setHeader("Content-Type", "text/csv");
         res.setHeader(
           "Content-Disposition",
           `attachment; filename="leads-${ts}.csv"`,
         );
-
         const stringifier = stringify({
           header: true,
           columns: [...CSV_COLUMNS],
         });
-
         stringifier.on("error", (err) => next(err));
         stringifier.pipe(res);
-
         const batchSize = 500;
         let skip = 0;
-
         try {
           for (;;) {
             const batch = await prisma.lead.findMany({
@@ -239,9 +212,7 @@ export function createLeadsRouter(): Router {
               skip,
               take: batchSize,
             });
-
             if (batch.length === 0) break;
-
             for (const lead of batch) {
               const row = csvRow(lead);
               const ok = stringifier.write(row);
@@ -251,7 +222,6 @@ export function createLeadsRouter(): Router {
                 });
               }
             }
-
             skip += batchSize;
             if (batch.length < batchSize) break;
           }
@@ -298,7 +268,6 @@ export function createLeadsRouter(): Router {
           res.status(400).json({ error: "Invalid id" });
           return;
         }
-
         const parsed = patchBodySchema.safeParse(req.body ?? {});
         if (!parsed.success) {
           res.status(400).json({
@@ -307,7 +276,6 @@ export function createLeadsRouter(): Router {
           });
           return;
         }
-
         const existing = await prisma.lead.findUnique({
           where: { id },
         });
@@ -315,15 +283,13 @@ export function createLeadsRouter(): Router {
           res.status(404).json({ error: "Not found" });
           return;
         }
-
-        const data: Prisma.LeadUpdateInput = {};
+        const data: any = {};
         if (parsed.data.status !== undefined) {
           data.status = parsed.data.status;
         }
         if (parsed.data.notes !== undefined) {
           data.notes = parsed.data.notes;
         }
-
         const lead = await prisma.lead.update({
           where: { id },
           data,
