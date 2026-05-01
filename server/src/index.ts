@@ -19,9 +19,11 @@ const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
 
 const app = express();
-app.set('trust proxy', 1);
+app.set("trust proxy", 1);
+
 const port = Number(process.env.PORT) || 3001;
 const devCorsFallback = "http://localhost:5173";
+
 /** In production without CORS_ORIGIN, reflect Origin (same-host SPA works). Prefer setting CORS_ORIGIN to your Railway HTTPS URL explicitly. */
 const corsOriginResolved =
   process.env.CORS_ORIGIN?.trim() ||
@@ -53,6 +55,40 @@ const globalLimiter = rateLimit({
 });
 app.use(globalLimiter);
 
+// --- Basic Auth: protect entire app behind a shared username/password ---
+// Set BASIC_AUTH_USER and BASIC_AUTH_PASS in Railway env vars to enable.
+// Skip /health so Railway healthcheck still works.
+app.use((req, res, next) => {
+  if (req.path === "/health") return next();
+
+  const expectedUser = process.env.BASIC_AUTH_USER;
+  const expectedPass = process.env.BASIC_AUTH_PASS;
+
+  // If env vars not set, skip auth (useful for local dev)
+  if (!expectedUser || !expectedPass) return next();
+
+  const authHeader = req.headers.authorization;
+  if (!authHeader || !authHeader.startsWith("Basic ")) {
+    res.set("WWW-Authenticate", 'Basic realm="Agency Finder"');
+    res.status(401).send("Authentication required");
+    return;
+  }
+
+  const base64 = authHeader.slice(6);
+  const decoded = Buffer.from(base64, "base64").toString();
+  const sep = decoded.indexOf(":");
+  const user = sep >= 0 ? decoded.slice(0, sep) : "";
+  const pass = sep >= 0 ? decoded.slice(sep + 1) : "";
+
+  if (user === expectedUser && pass === expectedPass) {
+    return next();
+  }
+
+  res.set("WWW-Authenticate", 'Basic realm="Agency Finder"');
+  res.status(401).send("Invalid credentials");
+});
+// --- end Basic Auth ---
+
 app.get("/health", async (_req, res) => {
   try {
     await prisma.$queryRaw`SELECT 1`;
@@ -62,18 +98,13 @@ app.get("/health", async (_req, res) => {
   }
 });
 
-app.use(
-  "/api",
-  createSearchesRouter(placesService, searchRouteLimiter),
-);
-
+app.use("/api", createSearchesRouter(placesService, searchRouteLimiter));
 app.use("/api/leads", createLeadsRouter());
 
 if (process.env.NODE_ENV === "production") {
   const clientDist =
     process.env.CLIENT_DIST_PATH?.trim() ||
     join(__dirname, "..", "..", "client", "dist");
-
   if (existsSync(clientDist)) {
     app.use(express.static(clientDist, { index: false }));
     app.use((req, res, next) => {
@@ -98,18 +129,11 @@ if (process.env.NODE_ENV === "production") {
 }
 
 app.use(
-  (
-    err: unknown,
-    _req: Request,
-    res: Response,
-    _next: NextFunction,
-  ) => {
+  (err: unknown, _req: Request, res: Response, _next: NextFunction) => {
     console.error("[server error]", err);
-
     if (res.headersSent) {
       return;
     }
-
     const statusFromErr =
       err !== null &&
       typeof err === "object" &&
@@ -117,19 +141,16 @@ app.use(
       typeof (err as { status?: unknown }).status === "number"
         ? (err as { status: number }).status
         : undefined;
-
     const status =
       typeof statusFromErr === "number" &&
       statusFromErr >= 400 &&
       statusFromErr < 600
         ? statusFromErr
         : 500;
-
     if (status >= 500) {
       res.status(500).json({ error: "Internal server error" });
       return;
     }
-
     let message =
       err instanceof Error && typeof err.message === "string"
         ? err.message.trim()
@@ -139,7 +160,6 @@ app.use(
     } else if (message.length > 2000) {
       message = `${message.slice(0, 2000)}…`;
     }
-
     res.status(status).json({ error: message });
   },
 );
