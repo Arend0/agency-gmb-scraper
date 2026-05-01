@@ -1,0 +1,47 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+model Lead {
+  id                         String   @id @default(cuid())
+  placeId                    String   @unique
+  businessName               String
+  formattedAddress           String?
+  city                       String?
+  country                    String?
+  latitude                   Float?
+  longitude                  Float?
+  googleMapsUri              String?
+  websiteUri                 String?
+  nationalPhoneNumber        String?
+  internationalPhoneNumber String?
+  rating                     Float?
+  userRatingCount            Int?
+  businessStatus             String?
+  primaryType                String?
+  types                      String[] @default([])
+  searchKeyword              String?
+  searchLocation             String?
+  status                     String   @default("NEW") // NEW, QUALIFIED, CONTACTED, NOT_RELEVANT
+  notes                      String?
+  createdAt                  DateTime @default(now())
+  updatedAt                DateTime @updatedAt
+
+  @@index([status])
+  @@index([city, country])
+}
+
+model SearchRun {
+  id           String   @id @default(cuid())
+  keyword      String
+  location     String
+  country      String?
+  resultsFound Int      @default(0)
+  resultsSaved Int      @default(0)
+  createdAt    DateTime @default(now())
+}
