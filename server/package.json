@@ -11,8 +11,8 @@
     "db:generate": "prisma generate"
   },
   "dependencies": {
-    "@prisma/client": "^6.19.0",
-    "prisma": "^6.19.0",
+    "@prisma/client": "^5.22.0",
+    "prisma": "^5.22.0",
     "cors": "^2.8.5",
     "csv-stringify": "^6.6.0",
     "dotenv": "^17.2.3",
