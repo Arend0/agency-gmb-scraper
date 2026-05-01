@@ -19,6 +19,7 @@ const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
 
 const app = express();
+app.set('trust proxy', 1);
 const port = Number(process.env.PORT) || 3001;
 const devCorsFallback = "http://localhost:5173";
 /** In production without CORS_ORIGIN, reflect Origin (same-host SPA works). Prefer setting CORS_ORIGIN to your Railway HTTPS URL explicitly. */
