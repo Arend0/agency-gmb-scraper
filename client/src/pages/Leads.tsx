@@ -4,8 +4,8 @@ import {
   useQuery,
   useQueryClient,
 } from '@tanstack/react-query'
-import { ExternalLink, MapPin } from 'lucide-react'
-import { useCallback, useEffect, useState } from 'react'
+import { ExternalLink, MapPin, Globe, Phone, Users } from 'lucide-react'
+import { useCallback, useEffect, useMemo, useState } from 'react'
 import { Link } from 'react-router-dom'
 import { toast } from 'sonner'
 import axios from 'axios'
@@ -108,6 +108,38 @@ function hasActiveFilters(filters: {
   )
 }
 
+function StatCard({
+  label,
+  value,
+  Icon,
+  loading,
+}: {
+  label: string
+  value: number | string
+  Icon: typeof Users
+  loading?: boolean
+}) {
+  return (
+    <div className="flex items-center gap-3 rounded-lg border border-gray-200 bg-white px-5 py-4 shadow-sm">
+      <div className="flex size-10 items-center justify-center rounded-md bg-[#FFC107]/15 text-[#b08300]">
+        <Icon className="size-5" aria-hidden />
+      </div>
+      <div>
+        <p className="text-xs font-medium uppercase tracking-wide text-gray-500">
+          {label}
+        </p>
+        <p className="text-2xl font-semibold tabular-nums text-gray-900">
+          {loading ? (
+            <span className="inline-block h-7 w-12 animate-pulse rounded bg-gray-200" />
+          ) : (
+            value
+          )}
+        </p>
+      </div>
+    </div>
+  )
+}
+
 function SkeletonRows() {
   const row = (_i: number) => (
     <tr key={`sk-${String(_i)}`} className="animate-pulse">
@@ -165,6 +197,7 @@ export default function Leads() {
   }, [search])
 
   const listParams = {
+    ...(status ? { status } : {}),
     ...(debouncedCity.trim()
       ? { city: debouncedCity.trim() }
       : {}),
@@ -190,7 +223,7 @@ export default function Leads() {
     placeholderData: keepPreviousData,
   })
 
-  const updateMutation = useMutation<
+  const updateMutation = useMutation
     Awaited<ReturnType<typeof updateLead>>,
     Error,
     { id: string; body: UpdateLeadBody }
@@ -253,19 +286,35 @@ export default function Leads() {
   const totalPages = Math.max(1, Math.ceil(total / PAGE_SIZE))
   const showSkeleton = isPending && !data && !error
 
+  // Page-level counts (current page only — see file note)
+  const pageStats = useMemo(() => {
+    const withPhone = rows.filter(
+      (l) =>
+        (l.internationalPhoneNumber?.trim() ||
+          l.nationalPhoneNumber?.trim() ||
+          '').length > 0,
+    ).length
+    const withWebsite = rows.filter(
+      (l) => (l.websiteUri?.trim() ?? '').length > 0,
+    ).length
+    return { withPhone, withWebsite }
+  }, [rows])
+
+  const filtersActive = hasActiveFilters({
+    status,
+    city: debouncedCity,
+    search: debouncedSearch,
+    hasPhone,
+    hasWebsite,
+  })
+
   const showEmptyOnboarding =
     !showSkeleton &&
     !error &&
     rows.length === 0 &&
     total === 0 &&
     page === 1 &&
-    !hasActiveFilters({
-      status,
-      city: debouncedCity,
-      search: debouncedSearch,
-      hasPhone,
-      hasWebsite,
-    })
+    !filtersActive
 
   const showFilteredEmpty =
     !showSkeleton &&
@@ -282,6 +331,33 @@ export default function Leads() {
           Filter, update status and notes, then export when you&apos;re ready.
         </p>
       </div>
+
+      {/* Stat strip */}
+      <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
+        <StatCard
+          label={filtersActive ? 'Filtered leads' : 'Total leads'}
+          value={data !== undefined ? total.toLocaleString() : '—'}
+          Icon={Users}
+          loading={showSkeleton}
+        />
+        <StatCard
+          label="With phone (page)"
+          value={data !== undefined ? pageStats.withPhone : '—'}
+          Icon={Phone}
+          loading={showSkeleton}
+        />
+        <StatCard
+          label="With website (page)"
+          value={data !== undefined ? pageStats.withWebsite : '—'}
+          Icon={Globe}
+          loading={showSkeleton}
+        />
+      </div>
+      {filtersActive && data !== undefined ? (
+        <p className="-mt-3 text-xs text-gray-500">
+          Filters active — showing {total.toLocaleString()} matching leads.
+        </p>
+      ) : null}
 
       <div className="flex flex-wrap items-end justify-between gap-4 rounded-lg border border-gray-200 bg-white p-4 shadow-sm">
         <div className="flex flex-1 flex-wrap items-end gap-4 gap-y-3 md:mr-4">
@@ -389,10 +465,7 @@ export default function Leads() {
         </button>
       </div>
 
-      <div className="flex flex-wrap items-center justify-between gap-2">
-        <p className="text-sm font-medium text-gray-900">
-          Total: {data !== undefined ? total : '…'} leads
-        </p>
+      <div className="flex items-center justify-end">
         {isFetching && !showSkeleton ? (
           <span className="text-xs text-gray-500">Refreshing…</span>
         ) : null}
@@ -566,7 +639,7 @@ function LeadRow({
       </td>
       <td className="whitespace-nowrap px-4 py-3 text-gray-700">
         {tel ? (
-          <a
+          
             href={tel}
             className="font-medium text-[#b08300] underline decoration-[#FFC107]/50 hover:text-gray-900"
           >
@@ -578,7 +651,7 @@ function LeadRow({
       </td>
       <td className="px-4 py-3">
         {lead.websiteUri ? (
-          <a
+          
             href={websiteHref(lead.websiteUri)}
             target="_blank"
             rel="noopener noreferrer"
@@ -642,7 +715,7 @@ function LeadRow({
       </td>
       <td className="whitespace-nowrap px-4 py-3">
         {lead.googleMapsUri ? (
-          <a
+          
             href={lead.googleMapsUri}
             target="_blank"
             rel="noopener noreferrer"
