@@ -78,34 +78,45 @@ export function createSearchesRouter(
         }
 
         // 1. Get results from Google (capped at MAX_RESULTS_PER_SEARCH)
-        const fromApi = await placesService.textSearch(keyword, location);
-        const trimmed = fromApi.slice(0, MAX_RESULTS_PER_SEARCH);
+        const fromApi: GooglePlacesLeadFields[] =
+          await placesService.textSearch(keyword, location);
+        const trimmed: GooglePlacesLeadFields[] = fromApi.slice(
+          0,
+          MAX_RESULTS_PER_SEARCH,
+        );
         const totalFound = trimmed.length;
 
         // 2. Apply user filters (hasPhone, hasWebsite, minRating)
-        const filtered = trimmed.filter((lead) =>
-          matchesFilters(lead, {
-            keyword,
-            location,
-            hasPhone,
-            hasWebsite,
-            minRating,
-          }),
+        const filtered: GooglePlacesLeadFields[] = trimmed.filter(
+          (lead: GooglePlacesLeadFields) =>
+            matchesFilters(lead, {
+              keyword,
+              location,
+              hasPhone,
+              hasWebsite,
+              minRating,
+            }),
         );
 
         // 3. Check which placeIds we already have in DB
-        const placeIds = filtered.map((row) => row.placeId);
+        const placeIds: string[] = filtered.map(
+          (row: GooglePlacesLeadFields) => row.placeId,
+        );
         const existing = await prisma.lead.findMany({
           where: { placeId: { in: placeIds } },
           select: { placeId: true },
         });
-        const existingIds = new Set(existing.map((row) => row.placeId));
+        const existingIds = new Set<string>(
+          existing.map((row: { placeId: string }) => row.placeId),
+        );
 
         // 4. Split into new vs duplicates
-        const newRows = filtered.filter((row) => !existingIds.has(row.placeId));
+        const newRows: GooglePlacesLeadFields[] = filtered.filter(
+          (row: GooglePlacesLeadFields) => !existingIds.has(row.placeId),
+        );
         const duplicatesSkipped = filtered.length - newRows.length;
 
-        // 5. Save only the new ones (no upsert — we already know they're new)
+        // 5. Save only the new ones
         const leadsSaved: Awaited<ReturnType<typeof prisma.lead.create>>[] = [];
 
         for (const row of newRows) {
@@ -147,7 +158,7 @@ export function createSearchesRouter(
           },
         });
 
-        // 7. Return clear stats so the UI can tell the user what happened
+        // 7. Return clear stats
         res.json({
           searchRunId: searchRun.id,
           totalFound,
