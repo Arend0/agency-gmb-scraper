@@ -12,6 +12,8 @@ import type {
   GooglePlacesService,
 } from "../services/googlePlaces.js";
 
+const MAX_RESULTS_PER_SEARCH = 50;
+
 const searchBodySchema = z.object({
   keyword: z.string().min(2),
   location: z.string().min(2),
@@ -69,14 +71,19 @@ export function createSearchesRouter(
           parsed.data;
 
         if (!process.env.GOOGLE_MAPS_API_KEY?.trim()) {
-          res.status(503).json({ error: "GOOGLE_MAPS_API_KEY is not configured" });
+          res
+            .status(503)
+            .json({ error: "GOOGLE_MAPS_API_KEY is not configured" });
           return;
         }
 
+        // 1. Get results from Google (capped at MAX_RESULTS_PER_SEARCH)
         const fromApi = await placesService.textSearch(keyword, location);
-        const totalFound = fromApi.length;
+        const trimmed = fromApi.slice(0, MAX_RESULTS_PER_SEARCH);
+        const totalFound = trimmed.length;
 
-        const filtered = fromApi.filter((lead) =>
+        // 2. Apply user filters (hasPhone, hasWebsite, minRating)
+        const filtered = trimmed.filter((lead) =>
           matchesFilters(lead, {
             keyword,
             location,
@@ -86,34 +93,27 @@ export function createSearchesRouter(
           }),
         );
 
-        const leadsSaved: Awaited<ReturnType<typeof prisma.lead.upsert>>[] = [];
+        // 3. Check which placeIds we already have in DB
+        const placeIds = filtered.map((row) => row.placeId);
+        const existing = await prisma.lead.findMany({
+          where: { placeId: { in: placeIds } },
+          select: { placeId: true },
+        });
+        const existingIds = new Set(existing.map((row) => row.placeId));
 
-        for (const row of filtered) {
+        // 4. Split into new vs duplicates
+        const newRows = filtered.filter((row) => !existingIds.has(row.placeId));
+        const duplicatesSkipped = filtered.length - newRows.length;
+
+        // 5. Save only the new ones (no upsert — we already know they're new)
+        const leadsSaved: Awaited<ReturnType<typeof prisma.lead.create>>[] = [];
+
+        for (const row of newRows) {
           // COMPLIANCE TODO: review Google Maps Platform retention rules before production (most fields max 30 days)
           leadsSaved.push(
-            await prisma.lead.upsert({
-              where: { placeId: row.placeId },
-              create: {
+            await prisma.lead.create({
+              data: {
                 placeId: row.placeId,
-                businessName: row.businessName,
-                formattedAddress: row.formattedAddress,
-                city: row.city,
-                country: row.country,
-                latitude: row.latitude,
-                longitude: row.longitude,
-                googleMapsUri: row.googleMapsUri,
-                websiteUri: row.websiteUri,
-                nationalPhoneNumber: row.nationalPhoneNumber,
-                internationalPhoneNumber: row.internationalPhoneNumber,
-                rating: row.rating,
-                userRatingCount: row.userRatingCount,
-                businessStatus: row.businessStatus,
-                primaryType: row.primaryType,
-                types: row.types,
-                searchKeyword: keyword,
-                searchLocation: location,
-              },
-              update: {
                 businessName: row.businessName,
                 formattedAddress: row.formattedAddress,
                 city: row.city,
@@ -136,6 +136,7 @@ export function createSearchesRouter(
           );
         }
 
+        // 6. Record the search run
         const searchRun = await prisma.searchRun.create({
           data: {
             keyword,
@@ -146,10 +147,13 @@ export function createSearchesRouter(
           },
         });
 
+        // 7. Return clear stats so the UI can tell the user what happened
         res.json({
           searchRunId: searchRun.id,
           totalFound,
           totalSaved: leadsSaved.length,
+          duplicatesSkipped,
+          filteredOut: trimmed.length - filtered.length,
           leads: leadsSaved,
         });
       } catch (e) {
