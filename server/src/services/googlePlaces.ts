@@ -1,7 +1,9 @@
 const SEARCH_TEXT_URL = "https://places.googleapis.com/v1/places:searchText";
 
+// Note: when paginating we also need places.nextPageToken in the response.
+// Field mask drives the Places API pricing tier (currently "Pro" SKU).
 const FIELD_MASK =
-  "places.id,places.displayName,places.formattedAddress,places.location,places.websiteUri,places.nationalPhoneNumber,places.internationalPhoneNumber,places.rating,places.userRatingCount,places.businessStatus,places.primaryType,places.types,places.googleMapsUri";
+  "places.id,places.displayName,places.formattedAddress,places.location,places.websiteUri,places.nationalPhoneNumber,places.internationalPhoneNumber,places.rating,places.userRatingCount,places.businessStatus,places.primaryType,places.types,places.googleMapsUri,nextPageToken";
 
 export type GooglePlacesLeadFields = {
   placeId: string;
@@ -41,23 +43,70 @@ type PlaceApiObject = {
 
 type SearchTextResponse = {
   places?: PlaceApiObject[];
+  nextPageToken?: string;
 };
 
 export class GooglePlacesService {
   constructor(private readonly apiKey: string) {}
 
+  /**
+   * Search for places. Will paginate up to maxResults (capped at 50).
+   * Each Google page returns up to 20; we may make up to 3 paginated calls.
+   * Google requires a short delay before nextPageToken becomes valid.
+   */
   async textSearch(
     keyword: string,
     location: string,
+    maxResults = 50,
   ): Promise<GooglePlacesLeadFields[]> {
-    return this.requestSearchText(keyword, location, false);
+    const cap = Math.min(Math.max(maxResults, 1), 50);
+    const collected: GooglePlacesLeadFields[] = [];
+    const seenIds = new Set<string>();
+    let pageToken: string | undefined;
+    let pagesFetched = 0;
+    const maxPages = 3; // 3 × 20 = 60, we trim to cap
+
+    while (collected.length < cap && pagesFetched < maxPages) {
+      const { places, nextPageToken } = await this.requestSearchText(
+        keyword,
+        location,
+        pageToken,
+        false,
+      );
+      pagesFetched += 1;
+
+      for (const p of places) {
+        if (collected.length >= cap) break;
+        if (!seenIds.has(p.placeId)) {
+          seenIds.add(p.placeId);
+          collected.push(p);
+        }
+      }
+
+      if (!nextPageToken || collected.length >= cap) break;
+      pageToken = nextPageToken;
+
+      // Google requires a brief pause before the next-page token becomes valid.
+      await new Promise((r) => setTimeout(r, 2000));
+    }
+
+    return collected;
   }
 
   private async requestSearchText(
     keyword: string,
     location: string,
+    pageToken: string | undefined,
     isRetry: boolean,
-  ): Promise<GooglePlacesLeadFields[]> {
+  ): Promise<{ places: GooglePlacesLeadFields[]; nextPageToken?: string }> {
+    const body: Record<string, unknown> = {
+      textQuery: `${keyword} in ${location}`,
+      maxResultCount: 20,
+    };
+    if (pageToken) {
+      body.pageToken = pageToken;
+    }
+
     const res = await fetch(SEARCH_TEXT_URL, {
       method: "POST",
       headers: {
@@ -65,30 +114,26 @@ export class GooglePlacesService {
         "X-Goog-Api-Key": this.apiKey,
         "X-Goog-FieldMask": FIELD_MASK,
       },
-      body: JSON.stringify({
-        textQuery: `${keyword} in ${location}`,
-        maxResultCount: 20,
-      }),
+      body: JSON.stringify(body),
     });
 
     if (res.status === 429 && !isRetry) {
       await new Promise((r) => setTimeout(r, 1000));
-      return this.requestSearchText(keyword, location, true);
+      return this.requestSearchText(keyword, location, pageToken, true);
     }
 
     if (!res.ok) {
-      const body = await res.text();
+      const text = await res.text();
       const err = new Error(
-        `Google Places API error ${res.status}: ${body || res.statusText}`,
+        `Google Places API error ${res.status}: ${text || res.statusText}`,
       ) as Error & { status: number };
       err.status = res.status;
       throw err;
     }
 
     const data = (await res.json()) as SearchTextResponse;
-    const places = data.places ?? [];
-
-    return places.map((p) => this.normalizePlace(p));
+    const places = (data.places ?? []).map((p) => this.normalizePlace(p));
+    return { places, nextPageToken: data.nextPageToken };
   }
 
   private normalizePlace(p: PlaceApiObject): GooglePlacesLeadFields {
