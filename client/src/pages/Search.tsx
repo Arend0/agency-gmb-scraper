@@ -1,6 +1,6 @@
 import { useMutation } from '@tanstack/react-query'
 import axios from 'axios'
-import { ExternalLink } from 'lucide-react'
+import { CheckCircle2, ExternalLink, Filter, RefreshCw, Search as SearchIcon } from 'lucide-react'
 import { useState } from 'react'
 import { useForm } from 'react-hook-form'
 import { Link } from 'react-router-dom'
@@ -14,6 +14,13 @@ type SearchFormValues = {
   hasPhone: boolean
   hasWebsite: boolean
   minRating: string
+}
+
+type SearchSummary = {
+  totalFound: number
+  totalSaved: number
+  duplicatesSkipped?: number
+  filteredOut?: number
 }
 
 function getErrorMessage(error: unknown): string {
@@ -71,14 +78,56 @@ function statusBadgeClass(status: string): string {
   }
 }
 
+function StatPill({
+  label,
+  value,
+  Icon,
+  tone = 'neutral',
+}: {
+  label: string
+  value: number
+  Icon: typeof SearchIcon
+  tone?: 'success' | 'neutral' | 'muted'
+}) {
+  const toneClasses =
+    tone === 'success'
+      ? 'bg-emerald-50 text-emerald-900 ring-emerald-600/20'
+      : tone === 'muted'
+      ? 'bg-gray-50 text-gray-700 ring-gray-300/60'
+      : 'bg-[#FFC107]/15 text-gray-900 ring-[#FFC107]/40'
+  return (
+    <div
+      className={`flex items-center gap-2 rounded-md px-3 py-2 ring-1 ring-inset ${toneClasses}`}
+    >
+      <Icon className="size-4 shrink-0" aria-hidden />
+      <span className="text-xs font-medium uppercase tracking-wide">{label}</span>
+      <span className="ml-1 text-sm font-semibold tabular-nums">{value}</span>
+    </div>
+  )
+}
+
 export default function Search() {
   const [leads, setLeads] = useState<Lead[]>([])
+  const [summary, setSummary] = useState<SearchSummary | null>(null)
 
   const mutation = useMutation({
     mutationFn: (body: SearchAgenciesBody) => searchAgencies(body),
     onSuccess: (data) => {
       setLeads(data.leads)
-      toast.success(`${data.totalSaved} leads saved`)
+      // Backend returns: totalFound, totalSaved, duplicatesSkipped, filteredOut
+      const s: SearchSummary = {
+        totalFound: data.totalFound ?? 0,
+        totalSaved: data.totalSaved ?? 0,
+        duplicatesSkipped:
+          (data as { duplicatesSkipped?: number }).duplicatesSkipped,
+        filteredOut: (data as { filteredOut?: number }).filteredOut,
+      }
+      setSummary(s)
+      toast.success(
+        s.totalSaved > 0
+          ? `${s.totalSaved} new lead${s.totalSaved === 1 ? '' : 's'} saved`
+          : 'No new leads — all results already in your database',
+      )
     },
     onError: (error) => {
       toast.error(getErrorMessage(error))
@@ -262,6 +311,56 @@ export default function Search() {
         </div>
       </form>
 
+      {summary && !mutation.isPending ? (
+        <div className="rounded-lg border border-gray-200 bg-white p-4 shadow-sm sm:p-5">
+          <div className="mb-3 flex items-center justify-between gap-2">
+            <h2 className="text-base font-semibold text-gray-900">
+              Search summary
+            </h2>
+            <span className="text-xs text-gray-500">
+              {leads.length} shown below
+            </span>
+          </div>
+          <div className="flex flex-wrap gap-2">
+            <StatPill
+              label="Found"
+              value={summary.totalFound}
+              Icon={SearchIcon}
+              tone="muted"
+            />
+            {summary.filteredOut !== undefined && summary.filteredOut > 0 ? (
+              <StatPill
+                label="Filtered out"
+                value={summary.filteredOut}
+                Icon={Filter}
+                tone="muted"
+              />
+            ) : null}
+            {summary.duplicatesSkipped !== undefined &&
+            summary.duplicatesSkipped > 0 ? (
+              <StatPill
+                label="Already in DB"
+                value={summary.duplicatesSkipped}
+                Icon={RefreshCw}
+                tone="muted"
+              />
+            ) : null}
+            <StatPill
+              label="New saved"
+              value={summary.totalSaved}
+              Icon={CheckCircle2}
+              tone="success"
+            />
+          </div>
+          {summary.totalSaved === 0 ? (
+            <p className="mt-3 text-xs text-gray-500">
+              No new leads added. Try a different keyword, broader location, or
+              loosen your filters.
+            </p>
+          ) : null}
+        </div>
+      ) : null}
+
       {(leads.length > 0 || (mutation.isSuccess && !mutation.isPending)) && (
         <div
           className={`space-y-3 ${mutation.isPending ? 'opacity-60' : ''}`}
@@ -295,7 +394,7 @@ export default function Search() {
                     </td>
                     <td className="px-4 py-3">
                       {lead.websiteUri ? (
-                        <a
+                        
                           href={websiteHref(lead.websiteUri)}
                           target="_blank"
                           rel="noopener noreferrer"
